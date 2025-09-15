@@ -17,14 +17,44 @@ jobs:
       with:
         python-version: '3.9'
     
+    - name: Check environment
+      run: |
+        echo "Checking if secrets are set..."
+        if [ -z "${{ secrets.ZD_SUBDOMAIN }}" ]; then
+          echo "ERROR: ZD_SUBDOMAIN secret is not set!"
+        else
+          echo "ZD_SUBDOMAIN is set"
+        fi
+        if [ -z "${{ secrets.ZD_EMAIL }}" ]; then
+          echo "ERROR: ZD_EMAIL secret is not set!"
+        else
+          echo "ZD_EMAIL is set"
+        fi
+        if [ -z "${{ secrets.ZD_API_TOKEN }}" ]; then
+          echo "ERROR: ZD_API_TOKEN secret is not set!"
+        else
+          echo "ZD_API_TOKEN is set"
+        fi
+    
     - name: Run optimization (DRY RUN)
       env:
         ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
         ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
         ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
-        cd Active Scripts
-        python weekly-agent-optimisation.py
+        cd "Active Scripts"
+        echo "Running script..."
+        python weekly-agent-optimisation.py 2>&1 || {
+          echo "Script failed with exit code: $?"
+          exit 1
+        }
+        
+    - name: List output files
+      if: always()
+      run: |
+        echo "Files in Active Scripts:"
+        ls -la "Active Scripts"/*.csv 2>/dev/null || echo "No CSV files found"
+        ls -la "Active Scripts"/*.log 2>/dev/null || echo "No log files found"
         
     - name: Upload results
       uses: actions/upload-artifact@v4
