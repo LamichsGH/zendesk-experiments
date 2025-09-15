@@ -1,11 +1,9 @@
 name: Weekly Agent Role Optimization
-
 on:
   schedule:
     # Runs every Monday at 9 AM UTC
     - cron: '0 9 * * 1'
   workflow_dispatch:  # Allows manual trigger for testing
-
 jobs:
   optimize-agents:
     runs-on: ubuntu-latest
@@ -29,7 +27,7 @@ jobs:
         python weekly-agent-optimisation.py
         
     - name: Upload results
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       if: always()
       with:
         name: optimization-results
