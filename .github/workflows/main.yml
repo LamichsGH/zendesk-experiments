@@ -64,7 +64,7 @@ jobs:
         echo "ZD_EMAIL: ${ZD_EMAIL:-NOT_SET}"
         echo "ZD_API_TOKEN length: ${#ZD_API_TOKEN}"
         echo "🐍 Running Python script..."
-        python weekly-agent-optimisation.py --log-level INFO
+        python weekly-agent-optimisation.py --execute --log-level INFO
         
     - name: List output files
       if: always()
