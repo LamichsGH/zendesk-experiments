@@ -1,0 +1,39 @@
+name: Weekly Agent Role Optimization
+
+on:
+  schedule:
+    # Runs every Monday at 9 AM UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allows manual trigger for testing
+
+jobs:
+  optimize-agents:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Run optimization (DRY RUN)
+      env:
+        ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
+        ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
+        ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
+      run: |
+        cd Active Scripts
+        python weekly-agent-optimisation.py
+        
+    - name: Upload results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: optimization-results
+        path: |
+          Active Scripts/*.csv
+          Active Scripts/*.log
+        retention-days: 30
