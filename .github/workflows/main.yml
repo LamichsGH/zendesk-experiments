@@ -4,6 +4,7 @@ on:
     # Runs every Monday at 9 AM UTC
     - cron: '0 9 * * 1'
   workflow_dispatch:  # Allows manual trigger for testing
+
 jobs:
   optimize-agents:
     runs-on: ubuntu-latest
@@ -35,6 +36,9 @@ jobs:
         else
           echo "ZD_API_TOKEN is set"
         fi
+        echo "Available scripts:"
+        ls -la *.py | grep weekly || echo "No weekly scripts found in root"
+        ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
     
     - name: Run optimization (DRY RUN)
       env:
@@ -42,9 +46,9 @@ jobs:
         ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
         ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
-        cd "Active Scripts"
-        echo "Running script..."
-        python weekly-agent-optimisation.py 2>&1 || {
+        # Use the efficient script from root directory
+        echo "Running weekly agent optimization..."
+        python weekly-agent-role-optimization-efficient.py --log-level INFO 2>&1 || {
           echo "Script failed with exit code: $?"
           exit 1
         }
@@ -52,16 +56,16 @@ jobs:
     - name: List output files
       if: always()
       run: |
-        echo "Files in Active Scripts:"
-        ls -la "Active Scripts"/*.csv 2>/dev/null || echo "No CSV files found"
-        ls -la "Active Scripts"/*.log 2>/dev/null || echo "No log files found"
+        echo "Files in current directory:"
+        ls -la *.csv 2>/dev/null || echo "No CSV files found"
+        ls -la *.log 2>/dev/null || echo "No log files found"
         
     - name: Upload results
       uses: actions/upload-artifact@v4
       if: always()
       with:
-        name: optimization-results
+        name: optimization-results-${{ github.run_number }}
         path: |
-          Active Scripts/*.csv
-          Active Scripts/*.log
+          *.csv
+          *.log
         retention-days: 30
