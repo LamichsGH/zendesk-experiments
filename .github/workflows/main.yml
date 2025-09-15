@@ -18,27 +18,36 @@ jobs:
       with:
         python-version: '3.9'
     
-    - name: Check environment
+    - name: Debug - Check repository contents
       run: |
-        echo "Checking if secrets are set..."
+        echo "📁 Repository root contents:"
+        ls -la
+        echo "📁 Active Scripts directory:"
+        ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
+        echo "📁 Looking for optimization script:"
+        find . -name "*weekly*agent*" -type f | head -5
+
+    - name: Check environment secrets
+      run: |
+        echo "🔍 Checking if secrets are set..."
         if [ -z "${{ secrets.ZD_SUBDOMAIN }}" ]; then
-          echo "ERROR: ZD_SUBDOMAIN secret is not set!"
+          echo "❌ ERROR: ZD_SUBDOMAIN secret is not set!"
+          exit 1
         else
-          echo "ZD_SUBDOMAIN is set"
+          echo "✅ ZD_SUBDOMAIN is set"
         fi
         if [ -z "${{ secrets.ZD_EMAIL }}" ]; then
-          echo "ERROR: ZD_EMAIL secret is not set!"
+          echo "❌ ERROR: ZD_EMAIL secret is not set!"
+          exit 1
         else
-          echo "ZD_EMAIL is set"
+          echo "✅ ZD_EMAIL is set"
         fi
         if [ -z "${{ secrets.ZD_API_TOKEN }}" ]; then
-          echo "ERROR: ZD_API_TOKEN secret is not set!"
+          echo "❌ ERROR: ZD_API_TOKEN secret is not set!"
+          exit 1
         else
-          echo "ZD_API_TOKEN is set"
+          echo "✅ ZD_API_TOKEN is set"
         fi
-        echo "Available scripts:"
-        ls -la *.py | grep weekly || echo "No weekly scripts found in root"
-        ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
     
     - name: Run optimization (DRY RUN)
       env:
@@ -46,19 +55,26 @@ jobs:
         ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
         ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
-        # Use the efficient script from root directory
-        echo "Running weekly agent optimization..."
-        python weekly-agent-role-optimization-efficient.py --log-level INFO 2>&1 || {
-          echo "Script failed with exit code: $?"
+        echo "🚀 Running weekly agent optimization..."
+        cd "Active Scripts"
+        echo "📁 Current directory: $(pwd)"
+        echo "📁 Files in directory:"
+        ls -la
+        echo "🐍 Running Python script..."
+        python weekly-agent-optimisation.py --log-level INFO 2>&1 || {
+          echo "❌ Script failed with exit code: $?"
           exit 1
         }
         
     - name: List output files
       if: always()
       run: |
-        echo "Files in current directory:"
-        ls -la *.csv 2>/dev/null || echo "No CSV files found"
-        ls -la *.log 2>/dev/null || echo "No log files found"
+        echo "📊 Files in Active Scripts:"
+        ls -la "Active Scripts"/*.csv 2>/dev/null || echo "No CSV files found in Active Scripts"
+        ls -la "Active Scripts"/*.log 2>/dev/null || echo "No log files found in Active Scripts"
+        echo "📊 Files in root:"
+        ls -la *.csv 2>/dev/null || echo "No CSV files found in root"
+        ls -la *.log 2>/dev/null || echo "No log files found in root"
         
     - name: Upload results
       uses: actions/upload-artifact@v4
@@ -66,6 +82,8 @@ jobs:
       with:
         name: optimization-results-${{ github.run_number }}
         path: |
+          Active Scripts/*.csv
+          Active Scripts/*.log
           *.csv
           *.log
         retention-days: 30
