@@ -1,8 +1,8 @@
 name: Weekly Agent Role Optimization
 on:
   schedule:
-    # Runs every Monday at 9 AM UTC
-    - cron: '0 9 * * 1'
+    # Runs every Monday at 9:32 AM GMT
+    - cron: '32 9 * * 1'
   workflow_dispatch:  # Allows manual trigger for testing
 
 jobs:
@@ -48,13 +48,13 @@ jobs:
           echo "✅ ZD_API_TOKEN is set (length: ${#ZD_API_TOKEN} characters)"
         fi
     
-    - name: Run optimization (DRY RUN)
+    - name: Run optimization (LIVE)
       env:
         ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
         ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
         ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
-        echo "🚀 Running weekly agent optimization..."
+        echo "🚀 Running weekly agent optimization (LIVE MODE)..."
         cd "Active Scripts"
         echo "📁 Current directory: $(pwd)"
         echo "📁 Files in directory:"
@@ -63,7 +63,7 @@ jobs:
         echo "ZD_SUBDOMAIN: ${ZD_SUBDOMAIN:-NOT_SET}"
         echo "ZD_EMAIL: ${ZD_EMAIL:-NOT_SET}"
         echo "ZD_API_TOKEN length: ${#ZD_API_TOKEN}"
-        echo "🐍 Running Python script..."
+        echo "🐍 Running Python script in LIVE mode..."
         python weekly-agent-optimisation.py --execute --log-level INFO
         
     - name: List output files
