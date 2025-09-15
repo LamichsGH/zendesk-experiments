@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Weekly Zendesk Agent Role Optimization Script
+Weekly Zendesk Agent Role Optimization Script - Efficient Version
 Automatically manages agent roles based on login activity:
 - 1+ week inactive: agent → light agent
 - 1+ month inactive: agent/light agent → end user
 - Protects admins from any changes
-- Safe execution with comprehensive logging and rollback capability
+- OPTIMIZED: Fetches agents directly instead of all users
 """
 
 import os
@@ -98,47 +98,75 @@ class WeeklyAgentOptimizer:
         url = f"{self.base_url}/custom_roles.json"
         status, response = make_api_request(url, auth_header=self.auth_header)
         
-        if status == 200:
-            data = json.loads(response)
-            for role in data.get('custom_roles', []):
-                if role['name'].lower() == 'light agent':
-                    logging.info(f"✅ Found Light agent role ID: {role['id']}")
-                    return role['id']
+        if status != 200:
+            raise ValueError(f"Failed to fetch custom roles: {status} - {response}")
         
-        raise ValueError("Light agent custom role not found!")
+        data = json.loads(response)
+        roles = data.get('custom_roles', [])
+        
+        # Log all available roles for debugging
+        logging.info("🔍 Available custom roles:")
+        for role in roles:
+            logging.info(f"   - '{role['name']}' (ID: {role['id']})")
+        
+        # Look for light agent role (case insensitive)
+        for role in roles:
+            role_name = role['name'].lower().strip()
+            if role_name == 'light agent':
+                logging.info(f"✅ Found Light agent role: '{role['name']}' (ID: {role['id']})")
+                return role['id']
+        
+        # If exact match fails, try partial matches
+        logging.warning("Exact 'Light agent' not found, trying partial matches...")
+        for role in roles:
+            role_name = role['name'].lower().strip()
+            if 'light' in role_name and 'agent' in role_name:
+                logging.info(f"✅ Found matching role: '{role['name']}' (ID: {role['id']})")
+                return role['id']
+        
+        # List all available roles for user reference
+        available_roles = [f"'{role['name']}' (ID: {role['id']})" for role in roles]
+        error_msg = f"Light agent custom role not found! Available roles: {', '.join(available_roles)}"
+        raise ValueError(error_msg)
 
-    def get_all_users(self) -> List[Dict]:
-        """Fetch all users from Zendesk using cursor pagination."""
-        logging.info("🔍 Fetching all users...")
-        all_users = []
+    def get_all_team_members(self) -> List[Dict]:
+        """Fetch all team members (agents and admins) efficiently."""
+        logging.info("👥 Fetching all team members...")
+        all_team_members = []
         
-        # Start with cursor-based pagination
-        url = f"{self.base_url}/users.json?page[size]=100"
-        page_count = 0
-        
-        while url and page_count < 200:  # Safety limit
-            page_count += 1
-            if page_count % 10 == 0:
-                logging.info(f"  Fetched {page_count} pages...")
+        # Fetch agents and admins separately for efficiency
+        for role in ['agent', 'admin']:
+            logging.info(f"🔍 Fetching {role}s...")
+            url = f"{self.base_url}/users.json?role={role}&page[size]=100"
+            page_count = 0
+            role_users = []
             
-            status, response = make_api_request(url, auth_header=self.auth_header)
-            
-            if status != 200:
-                logging.error(f"Failed to fetch users: {status} - {response}")
-                break
+            while url and page_count < 50:  # 50 pages = 5000 users max per role
+                page_count += 1
+                if page_count % 10 == 0:
+                    logging.info(f"  {role}s: Fetched {page_count} pages...")
                 
-            data = json.loads(response)
-            users = data.get('users', [])
-            all_users.extend(users)
+                status, response = make_api_request(url, auth_header=self.auth_header)
+                
+                if status != 200:
+                    logging.error(f"Failed to fetch {role}s: {status} - {response}")
+                    break
+                    
+                data = json.loads(response)
+                users = data.get('users', [])
+                role_users.extend(users)
+                
+                # Get next page URL from links
+                links = data.get('links', {})
+                url = links.get('next')
+                
+                time.sleep(0.1)  # Rate limiting
             
-            # Get next page URL from links
-            links = data.get('links', {})
-            url = links.get('next')
-            
-            time.sleep(0.1)  # Rate limiting
+            logging.info(f"✅ Fetched {len(role_users)} {role}s")
+            all_team_members.extend(role_users)
         
-        logging.info(f"✅ Fetched {len(all_users)} total users")
-        return all_users
+        logging.info(f"✅ Total team members fetched: {len(all_team_members)}")
+        return all_team_members
 
     def parse_last_login_date(self, last_login_str: Optional[str]) -> Optional[datetime]:
         """Parse the last_login_at string to datetime."""
@@ -180,25 +208,23 @@ class WeeklyAgentOptimizer:
         
         return 0, 0, []
 
-    def analyze_user_activity(self, users: List[Dict]) -> Dict[str, List[Dict]]:
-        """Analyze user activity and categorize actions needed."""
+    def analyze_user_activity(self, team_members: List[Dict]) -> Dict[str, List[Dict]]:
+        """Analyze team member activity and categorize actions needed."""
         
-        # Filter to only agents and custom role users (exclude end-users)
-        relevant_users = [u for u in users if u.get('role') in ['agent'] or u.get('custom_role_id')]
-        
-        logging.info(f"📊 Analyzing {len(relevant_users)} agents/custom role users")
+        logging.info(f"📊 Analyzing {len(team_members)} team members")
         
         results = {
             'week_inactive': [],     # agent → light agent
             'month_inactive': [],    # agent/light agent → end user
             'protected_admins': [],  # admins (no changes)
             'active_users': [],      # no changes needed
-            'blocked_users': []      # have open tickets, can't change
+            'blocked_users': [],     # have open tickets, can't change
+            'never_logged_in': []    # never signed in - skip for safety
         }
         
-        for i, user in enumerate(relevant_users, 1):
+        for i, user in enumerate(team_members, 1):
             if i % 50 == 0:
-                logging.info(f"  Processed {i}/{len(relevant_users)} users...")
+                logging.info(f"  Processed {i}/{len(team_members)} team members...")
             
             last_login_str = user.get('last_login_at')
             last_login_date = self.parse_last_login_date(last_login_str)
@@ -232,10 +258,10 @@ class WeeklyAgentOptimizer:
                 user_data['days_since_login'] = days_since
             else:
                 user_data['days_since_login'] = 'Never'
-                days_since = 9999  # Treat as very old
+                days_since = None  # Keep as None to distinguish from real dates
             
             # Determine action needed based on activity
-            if isinstance(days_since, int):
+            if days_since is not None:
                 if days_since >= 30:
                     # Month inactive: convert to end user
                     user_data['action_type'] = 'month_inactive'
@@ -248,8 +274,9 @@ class WeeklyAgentOptimizer:
                 else:
                     user_data['action_type'] = 'active'
             else:
-                # Never logged in - convert to end user
-                user_data['action_type'] = 'month_inactive'
+                # Never logged in - SKIP (don't convert new team members who haven't logged in yet)
+                user_data['action_type'] = 'never_logged_in'
+                user_data['blocking_reason'] = 'Never signed in - may be new team member'
             
             # Check ticket assignments for users that need changes
             if user_data['action_type'] in ['week_inactive', 'month_inactive']:
@@ -274,6 +301,8 @@ class WeeklyAgentOptimizer:
                         results['week_inactive'].append(user_data)
                     else:
                         results['month_inactive'].append(user_data)
+            elif user_data['action_type'] == 'never_logged_in':
+                results['never_logged_in'].append(user_data)
             else:
                 results['active_users'].append(user_data)
         
@@ -283,6 +312,7 @@ class WeeklyAgentOptimizer:
         logging.info(f"   Agents to convert to end users: {len(results['month_inactive'])}")
         logging.info(f"   Blocked by tickets/activity: {len(results['blocked_users'])}")
         logging.info(f"   Protected admins: {len(results['protected_admins'])}")
+        logging.info(f"   Never logged in (skipped for safety): {len(results['never_logged_in'])}")
         logging.info(f"   Active users (no changes): {len(results['active_users'])}")
         
         return results
@@ -562,7 +592,7 @@ if __name__ == "__main__":
         return filename
 
 def main():
-    parser = argparse.ArgumentParser(description='Weekly Zendesk Agent Role Optimization')
+    parser = argparse.ArgumentParser(description='Weekly Zendesk Agent Role Optimization - Efficient Version')
     parser.add_argument('--live', action='store_true', help='Execute changes (default is dry run)')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
                        default='INFO', help='Set logging level')
@@ -576,20 +606,20 @@ def main():
     dry_run = not args.live
     
     try:
-        logging.info("🔧 WEEKLY ZENDESK AGENT ROLE OPTIMIZATION")
+        logging.info("🔧 WEEKLY ZENDESK AGENT ROLE OPTIMIZATION - EFFICIENT VERSION")
         logging.info("=" * 80)
         
         optimizer = WeeklyAgentOptimizer(dry_run=dry_run)
         
-        # Step 1: Get all users
-        all_users = optimizer.get_all_users()
+        # Step 1: Get all team members (agents and admins)
+        all_team_members = optimizer.get_all_team_members()
         
-        if not all_users:
-            logging.error("❌ No users found!")
+        if not all_team_members:
+            logging.error("❌ No team members found!")
             return 1
         
-        # Step 2: Analyze user activity
-        analysis_results = optimizer.analyze_user_activity(all_users)
+        # Step 2: Analyze team member activity
+        analysis_results = optimizer.analyze_user_activity(all_team_members)
         
         # Step 3: Execute optimizations
         conversion_results = optimizer.execute_optimizations(analysis_results)
@@ -644,4 +674,3 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
-
