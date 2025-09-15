@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Weekly Zendesk Agent Role Optimization Script - GitHub Actions Version
+Weekly Zendesk Agent Role Optimization Script - GitHub Actions Fixed Version
 Automatically manages agent roles based on login activity:
 - 1+ week inactive: agent → light agent
 - 1+ month inactive: agent/light agent → end user
@@ -48,44 +48,85 @@ def make_api_request(url: str, method: str = 'GET', data: bytes = None, auth_hea
                 
         except urllib.error.HTTPError as e:
             if e.code == 429:  # Rate limited
-                wait_time = (2 ** attempt) * 5
-                logging.warning(f"Rate limited. Waiting {wait_time} seconds...")
-                time.sleep(wait_time)
+                sleep_time = 2 ** attempt
+                logging.warning(f"Rate limited (429), retrying in {sleep_time} seconds...")
+                time.sleep(sleep_time)
                 continue
-            elif e.code in [400, 401, 403, 404, 422]:
-                error_body = e.read().decode('utf-8') if e.fp else str(e)
-                return e.code, error_body
             else:
-                if attempt == max_retries - 1:
-                    return e.code, e.read().decode('utf-8') if e.fp else str(e)
-                time.sleep(2 ** attempt)
+                return e.code, e.read().decode('utf-8')
         except Exception as e:
             if attempt == max_retries - 1:
                 return 0, str(e)
-            time.sleep(2 ** attempt)
+            time.sleep(1)
     
     return 0, "Max retries exceeded"
 
 class WeeklyAgentOptimizer:
     def __init__(self, dry_run: bool = True):
+        # Enhanced environment variable debugging
+        logging.info("🔍 Environment Variable Debug:")
+        
+        # Get environment variables with debugging
         self.subdomain = os.getenv('ZD_SUBDOMAIN', 'manualhelp')
         self.email = os.getenv('ZD_EMAIL')
         self.api_token = os.getenv('ZD_API_TOKEN')
+        
+        # Debug environment variables
+        logging.info(f"   ZD_SUBDOMAIN: {'✅ SET' if self.subdomain else '❌ NOT SET'} (value: {self.subdomain})")
+        logging.info(f"   ZD_EMAIL: {'✅ SET' if self.email else '❌ NOT SET'} (value: {self.email})")
+        logging.info(f"   ZD_API_TOKEN: {'✅ SET' if self.api_token else '❌ NOT SET'} (length: {len(self.api_token) if self.api_token else 0})")
+        
+        # Check if running in GitHub Actions
+        if os.getenv('GITHUB_ACTIONS'):
+            logging.info("🎭 Running in GitHub Actions environment")
+            # Show all ZD_ environment variables
+            zd_vars = {k: v for k, v in os.environ.items() if k.startswith('ZD_')}
+            logging.info(f"   All ZD_ environment variables: {list(zd_vars.keys())}")
+        else:
+            logging.info("💻 Running in local environment")
+        
         self.dry_run = dry_run
         
-        # Set cutoff dates
-        self.week_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
-        self.month_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+        # Validate environment variables
+        missing_vars = []
+        if not self.subdomain or self.subdomain == 'manualhelp':
+            missing_vars.append('ZD_SUBDOMAIN')
+        if not self.email:
+            missing_vars.append('ZD_EMAIL')
+        if not self.api_token:
+            missing_vars.append('ZD_API_TOKEN')
         
-        if not all([self.subdomain, self.email, self.api_token]):
-            raise ValueError("Missing required environment variables: ZD_SUBDOMAIN, ZD_EMAIL, ZD_API_TOKEN")
+        if missing_vars:
+            error_msg = f"Missing required environment variables: {', '.join(missing_vars)}"
+            logging.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
+        # Setup authentication
         auth_string = f"{self.email}/token:{self.api_token}"
         self.auth_header = f"Basic {base64.b64encode(auth_string.encode()).decode()}"
         self.base_url = f"https://{self.subdomain}.zendesk.com/api/v2"
         
+        # Test API connection immediately
+        logging.info("🧪 Testing API connection...")
+        test_url = f"{self.base_url}/users/me.json"
+        status, response = make_api_request(test_url, auth_header=self.auth_header)
+        if status == 200:
+            data = json.loads(response)
+            user = data.get('user', {})
+            logging.info(f"✅ API connection successful!")
+            logging.info(f"   Authenticated as: {user.get('name', 'Unknown')} ({user.get('email', 'Unknown')})")
+            logging.info(f"   Role: {user.get('role', 'Unknown')}")
+        else:
+            error_msg = f"API connection failed: {status} - {response}"
+            logging.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
+        
         # Get light agent custom role ID
         self.light_agent_role_id = self.get_light_agent_role_id()
+        
+        # Set up time calculations
+        self.week_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+        self.month_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
         
         logging.info(f"🔧 {'DRY RUN - ' if self.dry_run else ''}WEEKLY AGENT ROLE OPTIMIZATION")
         logging.info(f"🏢 Domain: {self.subdomain}.zendesk.com")
@@ -95,11 +136,14 @@ class WeeklyAgentOptimizer:
 
     def get_light_agent_role_id(self) -> int:
         """Get the Light agent custom role ID."""
+        logging.info("🔍 Fetching Light agent custom role ID...")
         url = f"{self.base_url}/custom_roles.json"
         status, response = make_api_request(url, auth_header=self.auth_header)
         
         if status != 200:
-            raise ValueError(f"Failed to fetch custom roles: {status} - {response}")
+            error_msg = f"Failed to fetch custom roles: {status} - {response}"
+            logging.error(f"❌ {error_msg}")
+            raise ValueError(error_msg)
         
         data = json.loads(response)
         roles = data.get('custom_roles', [])
@@ -109,219 +153,207 @@ class WeeklyAgentOptimizer:
         for role in roles:
             logging.info(f"   - '{role['name']}' (ID: {role['id']})")
         
-        # Look for light agent role (case insensitive)
+        # Find Light agent role (case insensitive)
         for role in roles:
-            role_name = role['name'].lower().strip()
-            if role_name == 'light agent':
+            if role['name'].lower() == 'light agent':
                 logging.info(f"✅ Found Light agent role: '{role['name']}' (ID: {role['id']})")
                 return role['id']
         
-        # If exact match fails, try partial matches
-        logging.warning("Exact 'Light agent' not found, trying partial matches...")
-        for role in roles:
-            role_name = role['name'].lower().strip()
-            if 'light' in role_name and 'agent' in role_name:
-                logging.info(f"✅ Found matching role: '{role['name']}' (ID: {role['id']})")
-                return role['id']
+        raise ValueError("Light agent custom role not found!")
+
+    def _fetch_paginated_users(self, url: str, user_type: str) -> List[Dict]:
+        """Fetch all users using cursor pagination."""
+        all_users = []
+        page_count = 0
         
-        # List all available roles for user reference
-        available_roles = [f"'{role['name']}' (ID: {role['id']})" for role in roles]
-        error_msg = f"Light agent custom role not found! Available roles: {', '.join(available_roles)}"
-        raise ValueError(error_msg)
+        while url:
+            page_count += 1
+            if page_count % 5 == 0:
+                logging.info(f"  {user_type}s: Fetched {page_count} pages...")
+            
+            status, response = make_api_request(url, auth_header=self.auth_header)
+            
+            if status != 200:
+                logging.error(f"Failed to fetch {user_type}s page {page_count}: {status} - {response}")
+                break
+            
+            data = json.loads(response)
+            
+            # Handle both 'users' and user_type keys
+            users_key = user_type if user_type in data else 'users'
+            users = data.get(users_key, [])
+            all_users.extend(users)
+            
+            # Get next page URL
+            url = data.get('next_page')
+            
+            # Rate limiting
+            time.sleep(0.1)
+        
+        logging.info(f"✅ Fetched {len(all_users)} {user_type}s from {page_count} pages")
+        return all_users
 
     def get_all_team_members(self) -> List[Dict]:
-        """Fetch all team members (agents and admins) efficiently."""
+        """Fetch all agents and admins from Zendesk using cursor pagination."""
         logging.info("👥 Fetching all team members...")
         all_team_members = []
-        
-        # Fetch agents and admins separately for efficiency
-        for role in ['agent', 'admin']:
-            logging.info(f"🔍 Fetching {role}s...")
-            url = f"{self.base_url}/users.json?role={role}&page[size]=100"
-            page_count = 0
-            role_users = []
-            
-            while url and page_count < 50:  # 50 pages = 5000 users max per role
-                page_count += 1
-                if page_count % 10 == 0:
-                    logging.info(f"  {role}s: Fetched {page_count} pages...")
-                
-                status, response = make_api_request(url, auth_header=self.auth_header)
-                
-                if status != 200:
-                    logging.error(f"Failed to fetch {role}s: {status} - {response}")
-                    break
-                    
-                data = json.loads(response)
-                users = data.get('users', [])
-                role_users.extend(users)
-                
-                # Get next page URL from links
-                links = data.get('links', {})
-                url = links.get('next')
-                
-                time.sleep(0.1)  # Rate limiting
-            
-            logging.info(f"✅ Fetched {len(role_users)} {role}s")
-            all_team_members.extend(role_users)
-        
+
+        # Fetch agents
+        agents_url = f"{self.base_url}/agents.json?page[size]=100"
+        all_team_members.extend(self._fetch_paginated_users(agents_url, "agents"))
+
+        # Fetch admins
+        admins_url = f"{self.base_url}/admins.json?page[size]=100"
+        all_team_members.extend(self._fetch_paginated_users(admins_url, "admins"))
+
         logging.info(f"✅ Total team members fetched: {len(all_team_members)}")
         return all_team_members
 
-    def parse_last_login_date(self, last_login_str: Optional[str]) -> Optional[datetime]:
-        """Parse the last_login_at string to datetime."""
-        if not last_login_str:
-            return None
-        
-        try:
-            clean_date = last_login_str.split('.')[0] + 'Z' if '.' in last_login_str else last_login_str
-            return datetime.fromisoformat(clean_date.replace('Z', '+00:00'))
-        except (ValueError, AttributeError):
-            return None
-
-    def check_agent_ticket_assignments(self, agent_id: int) -> Tuple[int, int, List[str]]:
+    def get_assigned_tickets_count(self, agent_id: int) -> int:
         """Check how many tickets are assigned to this agent."""
         url = f"{self.base_url}/search.json?query=assignee:{agent_id}%20status<solved"
         status, response = make_api_request(url, auth_header=self.auth_header)
         
         if status == 200:
             data = json.loads(response)
-            results = data.get('results', [])
-            total_count = data.get('count', 0)
-            
-            sample_ticket_ids = [str(ticket['id']) for ticket in results[:5]]
-            
-            # Count recent tickets (last 7 days)
-            recent_count = 0
-            cutoff_7_days = datetime.now(timezone.utc) - timedelta(days=7)
-            
-            for ticket in results:
-                created_at_str = ticket.get('created_at', '')
-                try:
-                    created_at = datetime.fromisoformat(created_at_str.replace('Z', '+00:00'))
-                    if created_at > cutoff_7_days:
-                        recent_count += 1
-                except:
-                    continue
-            
-            return total_count, recent_count, sample_ticket_ids
-        
-        return 0, 0, []
+            return data.get('count', 0)
+        else:
+            logging.warning(f"Could not fetch ticket count for agent {agent_id}: {status}")
+            return 0
 
-    def analyze_user_activity(self, team_members: List[Dict]) -> Dict[str, List[Dict]]:
-        """Analyze team member activity and categorize actions needed."""
-        
-        logging.info(f"📊 Analyzing {len(team_members)} team members")
+    def analyze_user_activity(self, team_members: List[Dict]) -> Dict:
+        """Analyze user activity and categorize users."""
+        logging.info("📊 Analyzing user activity...")
         
         results = {
-            'week_inactive': [],     # agent → light agent
-            'month_inactive': [],    # agent/light agent → end user
-            'protected_admins': [],  # admins (no changes)
-            'active_users': [],      # no changes needed
-            'blocked_users': [],     # have open tickets, can't change
-            'never_logged_in': []    # never signed in - skip for safety
+            'active': [],
+            'week_inactive': [],
+            'month_inactive': [],
+            'never_logged_in': [],
+            'errors': []
         }
         
-        for i, user in enumerate(team_members, 1):
-            if i % 50 == 0:
-                logging.info(f"  Processed {i}/{len(team_members)} team members...")
-            
-            last_login_str = user.get('last_login_at')
-            last_login_date = self.parse_last_login_date(last_login_str)
-            
-            user_data = {
-                'id': user['id'],
-                'name': user['name'],
-                'email': user['email'],
-                'role': user['role'],
-                'custom_role_id': user.get('custom_role_id'),
-                'last_login_at': last_login_str,
-                'last_login_parsed': last_login_date,
-                'days_since_login': None,
-                'action_type': None,
-                'can_convert': False,
-                'blocking_reason': None,
-                'open_tickets': 0,
-                'recent_tickets': 0,
-                'sample_ticket_ids': []
-            }
-            
-            # Skip admins completely
-            if user['role'] == 'admin':
-                user_data['action_type'] = 'protected_admin'
-                results['protected_admins'].append(user_data)
-                continue
-            
-            # Calculate days since login
-            if last_login_date:
-                days_since = (datetime.now(timezone.utc) - last_login_date).days
-                user_data['days_since_login'] = days_since
-            else:
-                user_data['days_since_login'] = 'Never'
-                days_since = None  # Keep as None to distinguish from real dates
-            
-            # Determine action needed based on activity
-            if days_since is not None:
-                if days_since >= 30:
-                    # Month inactive: convert to end user
-                    user_data['action_type'] = 'month_inactive'
-                elif days_since >= 7:
-                    # Week inactive: convert to light agent (only if currently full agent)
-                    if user['role'] == 'agent' and not user.get('custom_role_id'):
-                        user_data['action_type'] = 'week_inactive'
-                    else:
+        for user in team_members:
+            try:
+                user_data = {
+                    'id': user['id'],
+                    'name': user['name'],
+                    'email': user['email'],
+                    'role': user['role'],
+                    'custom_role_id': user.get('custom_role_id'),
+                    'last_login_at': user.get('last_login_at'),
+                    'active': user.get('active', True),
+                    'suspended': user.get('suspended', False),
+                    'created_at': user.get('created_at')
+                }
+                
+                # Skip if suspended or inactive
+                if user_data['suspended'] or not user_data['active']:
+                    user_data['action_type'] = 'suspended_or_inactive'
+                    user_data['blocking_reason'] = 'User is suspended or inactive'
+                    results['errors'].append(user_data)
+                    continue
+                
+                # Skip admins
+                if user_data['role'] == 'admin':
+                    user_data['action_type'] = 'admin_protected'
+                    user_data['blocking_reason'] = 'Admin role - protected from changes'
+                    results['errors'].append(user_data)
+                    continue
+                
+                # Parse last login date
+                if user_data['last_login_at']:
+                    last_login = datetime.fromisoformat(user_data['last_login_at'].replace('Z', '+00:00'))
+                    days_since = (datetime.now(timezone.utc) - last_login).days
+                    user_data['days_since_login'] = days_since
+                else:
+                    user_data['days_since_login'] = 'Never'
+                    days_since = None  # Keep as None to distinguish from real dates
+                
+                # Check for assigned tickets
+                assigned_tickets = self.get_assigned_tickets_count(user_data['id'])
+                user_data['assigned_tickets'] = assigned_tickets
+                
+                if assigned_tickets > 0:
+                    user_data['action_type'] = 'has_tickets'
+                    user_data['blocking_reason'] = f'Has {assigned_tickets} assigned tickets'
+                    results['errors'].append(user_data)
+                    continue
+                
+                # Categorize based on activity
+                if days_since is not None:
+                    if days_since >= 30:  # Month+ inactive
+                        if user_data['role'] in ['agent', 'end-user']:
+                            user_data['action_type'] = 'month_inactive'
+                            user_data['recommended_action'] = 'Convert to end-user'
+                            results['month_inactive'].append(user_data)
+                        else:
+                            user_data['action_type'] = 'already_converted'
+                            user_data['blocking_reason'] = f'Already has role: {user_data["role"]}'
+                            results['errors'].append(user_data)
+                    elif days_since >= 7:  # Week+ inactive
+                        if user_data['role'] == 'agent':
+                            user_data['action_type'] = 'week_inactive'
+                            user_data['recommended_action'] = 'Convert to light agent'
+                            results['week_inactive'].append(user_data)
+                        else:
+                            user_data['action_type'] = 'already_light_or_end_user'
+                            user_data['blocking_reason'] = f'Already has role: {user_data["role"]}'
+                            results['errors'].append(user_data)
+                    else:  # Active
                         user_data['action_type'] = 'active'
+                        results['active'].append(user_data)
                 else:
-                    user_data['action_type'] = 'active'
-            else:
-                # Never logged in - SKIP (don't convert new team members who haven't logged in yet)
-                user_data['action_type'] = 'never_logged_in'
-                user_data['blocking_reason'] = 'Never signed in - may be new team member'
-            
-            # Check ticket assignments for users that need changes
-            if user_data['action_type'] in ['week_inactive', 'month_inactive']:
-                open_count, recent_count, sample_tickets = self.check_agent_ticket_assignments(user['id'])
+                    # Never logged in - SKIP (don't convert new team members who haven't logged in yet)
+                    user_data['action_type'] = 'never_logged_in'
+                    user_data['blocking_reason'] = 'Never signed in - may be new team member'
+                    results['never_logged_in'].append(user_data)
                 
-                user_data['open_tickets'] = open_count
-                user_data['recent_tickets'] = recent_count
-                user_data['sample_ticket_ids'] = sample_tickets
-                
-                # Determine if user can be safely converted
-                if open_count > 0:
-                    user_data['can_convert'] = False
-                    user_data['blocking_reason'] = f"{open_count} open tickets assigned"
-                    results['blocked_users'].append(user_data)
-                elif recent_count > 5:  # Still handling recent tickets
-                    user_data['can_convert'] = False
-                    user_data['blocking_reason'] = f"{recent_count} recent tickets (still active)"
-                    results['blocked_users'].append(user_data)
-                else:
-                    user_data['can_convert'] = True
-                    if user_data['action_type'] == 'week_inactive':
-                        results['week_inactive'].append(user_data)
-                    else:
-                        results['month_inactive'].append(user_data)
-            elif user_data['action_type'] == 'never_logged_in':
-                results['never_logged_in'].append(user_data)
-            else:
-                results['active_users'].append(user_data)
+            except Exception as e:
+                error_data = {
+                    'id': user.get('id', 'unknown'),
+                    'name': user.get('name', 'unknown'),
+                    'email': user.get('email', 'unknown'),
+                    'error': str(e),
+                    'action_type': 'error'
+                }
+                results['errors'].append(error_data)
+                logging.error(f"Error processing user {user.get('name', 'unknown')}: {e}")
         
         # Log summary
-        logging.info(f"\n📊 ANALYSIS SUMMARY:")
-        logging.info(f"   Agents to convert to light agents: {len(results['week_inactive'])}")
-        logging.info(f"   Agents to convert to end users: {len(results['month_inactive'])}")
-        logging.info(f"   Blocked by tickets/activity: {len(results['blocked_users'])}")
-        logging.info(f"   Protected admins: {len(results['protected_admins'])}")
-        logging.info(f"   Never logged in (skipped for safety): {len(results['never_logged_in'])}")
-        logging.info(f"   Active users (no changes): {len(results['active_users'])}")
+        logging.info("📈 Activity Analysis Summary:")
+        logging.info(f"   🟢 Active (< 7 days): {len(results['active'])}")
+        logging.info(f"   🟡 Week inactive (7-29 days): {len(results['week_inactive'])}")
+        logging.info(f"   🔴 Month inactive (30+ days): {len(results['month_inactive'])}")
+        logging.info(f"   ⚪ Never logged in (skipped for safety): {len(results['never_logged_in'])}")
+        logging.info(f"   ❌ Errors/Blocked: {len(results['errors'])}")
         
         return results
 
-    def convert_agent_to_light_agent(self, user_id: int) -> Tuple[bool, str]:
-        """Convert agent to light agent role."""
+    def convert_agent_to_light_agent(self, user_id: int, user_name: str) -> bool:
+        """Convert an agent to light agent (custom role)."""
         if self.dry_run:
-            return True, "DRY RUN - Would convert to light agent"
+            logging.info(f"🔄 [DRY RUN] Would convert {user_name} (ID: {user_id}) to light agent")
+            return True
         
+        # Step 1: Convert to end-user (system role)
+        url = f"{self.base_url}/users/{user_id}.json"
+        update_data = {
+            "user": {
+                "role": "end-user"
+            }
+        }
+        
+        data = json.dumps(update_data).encode('utf-8')
+        status, response = make_api_request(url, method='PUT', data=data, auth_header=self.auth_header)
+        
+        if status == 200:
+            logging.info(f"✅ Step 1: Converted {user_name} to end-user")
+        else:
+            logging.error(f"❌ Failed to convert {user_name} to end-user: {status} - {response}")
+            return False
+        
+        # Step 2: Assign Light agent custom role
         url = f"{self.base_url}/users/{user_id}.json"
         update_data = {
             "user": {
@@ -333,20 +365,23 @@ class WeeklyAgentOptimizer:
         status, response = make_api_request(url, method='PUT', data=data, auth_header=self.auth_header)
         
         if status == 200:
-            return True, "Successfully converted to light agent"
+            logging.info(f"✅ Step 2: Assigned Light agent role to {user_name}")
+            return True
         else:
-            return False, f"Error {status}: {response}"
+            logging.error(f"❌ Failed to assign Light agent role to {user_name}: {status} - {response}")
+            return False
 
-    def convert_agent_to_end_user(self, user_id: int) -> Tuple[bool, str]:
-        """Convert agent to end user."""
+    def convert_user_to_end_user(self, user_id: int, user_name: str) -> bool:
+        """Convert a user to end-user."""
         if self.dry_run:
-            return True, "DRY RUN - Would convert to end user"
+            logging.info(f"🔄 [DRY RUN] Would convert {user_name} (ID: {user_id}) to end-user")
+            return True
         
         url = f"{self.base_url}/users/{user_id}.json"
         update_data = {
             "user": {
                 "role": "end-user",
-                "custom_role_id": None
+                "custom_role_id": None  # Remove any custom role
             }
         }
         
@@ -354,210 +389,131 @@ class WeeklyAgentOptimizer:
         status, response = make_api_request(url, method='PUT', data=data, auth_header=self.auth_header)
         
         if status == 200:
-            return True, "Successfully converted to end user"
+            logging.info(f"✅ Converted {user_name} to end-user")
+            return True
         else:
-            return False, f"Error {status}: {response}"
+            logging.error(f"❌ Failed to convert {user_name} to end-user: {status} - {response}")
+            return False
 
-    def execute_optimizations(self, analysis_results: Dict[str, List[Dict]]) -> List[Dict]:
-        """Execute the role optimizations."""
-        
-        mode_text = "SIMULATING" if self.dry_run else "EXECUTING"
-        logging.info(f"\n🔄 {mode_text} ROLE OPTIMIZATIONS...")
-        logging.info("-" * 80)
-        
-        conversion_results = []
-        total_successful = 0
-        total_failed = 0
-        
-        # Convert agents to light agents (week inactive)
-        week_inactive = analysis_results['week_inactive']
-        if week_inactive:
-            logging.info(f"🔸 Converting {len(week_inactive)} agents to light agents...")
-            
-            for i, user in enumerate(week_inactive, 1):
-                logging.info(f"  [{i}/{len(week_inactive)}] {user['name']} ({user['email']})...")
-                
-                success, message = self.convert_agent_to_light_agent(user['id'])
-                
-                result = {
-                    'user_id': user['id'],
-                    'name': user['name'],
-                    'email': user['email'],
-                    'from_role': user['role'],
-                    'to_role': 'agent (light)',
-                    'action_type': 'week_inactive',
-                    'days_since_login': user['days_since_login'],
-                    'success': success,
-                    'message': message,
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                conversion_results.append(result)
-                
-                if success:
-                    total_successful += 1
-                    logging.info(f"    ✅ {message}")
-                else:
-                    total_failed += 1
-                    logging.error(f"    ❌ {message}")
-                
-                if not self.dry_run:
-                    time.sleep(0.5)
-        
-        # Convert agents to end users (month inactive)
-        month_inactive = analysis_results['month_inactive']
-        if month_inactive:
-            logging.info(f"🔸 Converting {len(month_inactive)} agents to end users...")
-            
-            for i, user in enumerate(month_inactive, 1):
-                logging.info(f"  [{i}/{len(month_inactive)}] {user['name']} ({user['email']})...")
-                
-                success, message = self.convert_agent_to_end_user(user['id'])
-                
-                result = {
-                    'user_id': user['id'],
-                    'name': user['name'],
-                    'email': user['email'],
-                    'from_role': user['role'],
-                    'to_role': 'end-user',
-                    'action_type': 'month_inactive',
-                    'days_since_login': user['days_since_login'],
-                    'success': success,
-                    'message': message,
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                conversion_results.append(result)
-                
-                if success:
-                    total_successful += 1
-                    logging.info(f"    ✅ {message}")
-                else:
-                    total_failed += 1
-                    logging.error(f"    ❌ {message}")
-                
-                if not self.dry_run:
-                    time.sleep(0.5)
-        
-        logging.info(f"\n📊 {mode_text.upper()} SUMMARY:")
-        logging.info(f"   ✅ Successful conversions: {total_successful}")
-        logging.info(f"   ❌ Failed conversions: {total_failed}")
-        logging.info(f"   📋 Total processed: {len(conversion_results)}")
-        
-        return conversion_results
-
-    def export_results(self, analysis_results: Dict[str, List[Dict]], conversion_results: List[Dict]) -> str:
-        """Export all results to CSV."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"weekly_agent_optimization_{'dryrun' if self.dry_run else 'results'}_{timestamp}.csv"
-        
-        # Combine all users for export
+    def save_results_to_csv(self, analysis_results: Dict, filename: str):
+        """Save analysis results to CSV file."""
         all_users = []
-        for category, users in analysis_results.items():
-            for user in users:
-                user['category'] = category
-                all_users.append(user)
         
-        # Create results lookup
-        results_dict = {r['user_id']: r for r in conversion_results}
+        # Combine all categories
+        for category, users in analysis_results.items():
+            if isinstance(users, list):
+                for user in users:
+                    user_record = user.copy()
+                    user_record['category'] = category
+                    all_users.append(user_record)
+        
+        if not all_users:
+            logging.warning("No users to save to CSV")
+            return
+        
+        # Get all possible fields
+        all_fields = set()
+        for user in all_users:
+            all_fields.update(user.keys())
+        
+        fieldnames = sorted(all_fields)
         
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = [
-                'user_id', 'name', 'email', 'role', 'custom_role_id', 'category',
-                'last_login_at', 'days_since_login', 'action_type', 'can_convert',
-                'blocking_reason', 'open_tickets', 'recent_tickets', 'sample_ticket_ids',
-                'conversion_success', 'conversion_message', 'timestamp'
-            ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            
-            for user in all_users:
-                result = results_dict.get(user['id'], {})
-                
-                row = {
-                    'user_id': user['id'],
-                    'name': user['name'],
-                    'email': user['email'],
-                    'role': user['role'],
-                    'custom_role_id': user.get('custom_role_id', ''),
-                    'category': user['category'],
-                    'last_login_at': user.get('last_login_at', ''),
-                    'days_since_login': user.get('days_since_login', ''),
-                    'action_type': user.get('action_type', ''),
-                    'can_convert': user.get('can_convert', ''),
-                    'blocking_reason': user.get('blocking_reason', ''),
-                    'open_tickets': user.get('open_tickets', ''),
-                    'recent_tickets': user.get('recent_tickets', ''),
-                    'sample_ticket_ids': ', '.join(user.get('sample_ticket_ids', [])),
-                    'conversion_success': result.get('success', ''),
-                    'conversion_message': result.get('message', ''),
-                    'timestamp': result.get('timestamp', '')
-                }
-                writer.writerow(row)
+            writer.writerows(all_users)
         
-        logging.info(f"📁 Results exported to: {filename}")
-        return filename
+        logging.info(f"📄 Results saved to {filename}")
+
+    def run_optimization(self):
+        """Run the complete optimization process."""
+        try:
+            # Get all team members
+            team_members = self.get_all_team_members()
+            
+            # Analyze activity
+            analysis_results = self.analyze_user_activity(team_members)
+            
+            # Save analysis results
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            analysis_file = f"agent_analysis_{timestamp}.csv"
+            self.save_results_to_csv(analysis_results, analysis_file)
+            
+            # Process conversions
+            success_count = 0
+            error_count = 0
+            
+            # Convert week-inactive agents to light agents
+            logging.info("🔄 Converting week-inactive agents to light agents...")
+            for user in analysis_results['week_inactive']:
+                if self.convert_agent_to_light_agent(user['id'], user['name']):
+                    success_count += 1
+                else:
+                    error_count += 1
+            
+            # Convert month-inactive users to end-users
+            logging.info("🔄 Converting month-inactive users to end-users...")
+            for user in analysis_results['month_inactive']:
+                if self.convert_user_to_end_user(user['id'], user['name']):
+                    success_count += 1
+                else:
+                    error_count += 1
+            
+            # Final summary
+            logging.info("=" * 80)
+            logging.info(f"🎯 OPTIMIZATION COMPLETE!")
+            logging.info(f"✅ Successful conversions: {success_count}")
+            logging.info(f"❌ Failed conversions: {error_count}")
+            logging.info(f"📊 Analysis saved to: {analysis_file}")
+            
+            if self.dry_run:
+                logging.info("🔍 This was a DRY RUN - no actual changes were made")
+            
+            return {
+                'success_count': success_count,
+                'error_count': error_count,
+                'analysis_file': analysis_file,
+                'analysis_results': analysis_results
+            }
+            
+        except Exception as e:
+            logging.error(f"❌ Optimization failed: {e}")
+            raise
 
 def main():
+    """Main function."""
     parser = argparse.ArgumentParser(description='Weekly Zendesk Agent Role Optimization')
-    parser.add_argument('--live', action='store_true', help='Execute changes (default is dry run)')
-    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
-                       default='INFO', help='Set logging level')
+    parser.add_argument('--dry-run', action='store_true', default=True,
+                        help='Run in dry-run mode (default: True)')
+    parser.add_argument('--execute', action='store_true',
+                        help='Execute actual changes (overrides dry-run)')
+    parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
+                        default='INFO', help='Set logging level')
     
     args = parser.parse_args()
     
     # Setup logging
-    log_filename = setup_logging()
+    log_file = setup_logging()
+    
+    # Set log level
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     
-    dry_run = not args.live
+    # Determine if this is a dry run
+    dry_run = args.dry_run and not args.execute
+    
+    logging.info(f"🚀 Starting Weekly Agent Role Optimization")
+    logging.info(f"📝 Log file: {log_file}")
+    logging.info(f"🔧 Mode: {'DRY RUN' if dry_run else 'EXECUTE'}")
     
     try:
-        logging.info("🔧 WEEKLY ZENDESK AGENT ROLE OPTIMIZATION")
-        logging.info("=" * 80)
-        
         optimizer = WeeklyAgentOptimizer(dry_run=dry_run)
+        results = optimizer.run_optimization()
         
-        # Step 1: Get all team members (agents and admins)
-        all_team_members = optimizer.get_all_team_members()
-        
-        if not all_team_members:
-            logging.error("❌ No team members found!")
-            return 1
-        
-        # Step 2: Analyze team member activity
-        analysis_results = optimizer.analyze_user_activity(all_team_members)
-        
-        # Step 3: Execute optimizations
-        conversion_results = optimizer.execute_optimizations(analysis_results)
-        
-        # Step 4: Export results
-        results_file = optimizer.export_results(analysis_results, conversion_results)
-        
-        # Step 5: Final summary
-        total_changes = len([r for r in conversion_results if r['success']])
-        week_changes = len([r for r in conversion_results if r['action_type'] == 'week_inactive' and r['success']])
-        month_changes = len([r for r in conversion_results if r['action_type'] == 'month_inactive' and r['success']])
-        
-        logging.info(f"\n🎯 {'DRY RUN' if dry_run else 'OPTIMIZATION'} COMPLETE!")
-        
-        if dry_run:
-            logging.info(f"📋 Would convert {week_changes} agents to light agents")
-            logging.info(f"📋 Would convert {month_changes} agents to end users")
-            logging.info(f"💰 Potential savings: {total_changes} licenses optimized")
-            logging.info(f"🚀 Run with --live to execute changes")
-        else:
-            logging.info(f"✅ {week_changes} agents converted to light agents")
-            logging.info(f"✅ {month_changes} agents converted to end users")
-            logging.info(f"💰 Actual savings: {total_changes} licenses optimized")
-        
-        logging.info(f"📁 Detailed results: {results_file}")
-        logging.info(f"📁 Log file: {log_filename}")
-        
+        logging.info("🎉 Script completed successfully!")
         return 0
         
     except Exception as e:
-        logging.error(f"❌ Weekly optimization failed: {e}")
+        logging.error(f"💥 Script failed: {e}")
         return 1
 
 if __name__ == "__main__":
