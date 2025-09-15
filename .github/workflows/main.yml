@@ -24,30 +24,81 @@ jobs:
         ls -la
         echo "📁 Active Scripts directory:"
         ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
-        echo "📁 Looking for optimization script:"
-        find . -name "*weekly*agent*" -type f | head -5
 
     - name: Check environment secrets
+      env:
+        ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
+        ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
+        ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
-        echo "🔍 Checking if secrets are set..."
-        if [ -z "${{ secrets.ZD_SUBDOMAIN }}" ]; then
-          echo "❌ ERROR: ZD_SUBDOMAIN secret is not set!"
-          exit 1
+        echo "🔍 Checking if secrets are set in environment..."
+        if [ -z "$ZD_SUBDOMAIN" ]; then
+          echo "❌ ERROR: ZD_SUBDOMAIN environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_SUBDOMAIN }}'"
         else
-          echo "✅ ZD_SUBDOMAIN is set"
+          echo "✅ ZD_SUBDOMAIN is set: ${ZD_SUBDOMAIN}"
         fi
-        if [ -z "${{ secrets.ZD_EMAIL }}" ]; then
-          echo "❌ ERROR: ZD_EMAIL secret is not set!"
-          exit 1
+        if [ -z "$ZD_EMAIL" ]; then
+          echo "❌ ERROR: ZD_EMAIL environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_EMAIL }}'"
         else
-          echo "✅ ZD_EMAIL is set"
+          echo "✅ ZD_EMAIL is set: ${ZD_EMAIL}"
         fi
-        if [ -z "${{ secrets.ZD_API_TOKEN }}" ]; then
-          echo "❌ ERROR: ZD_API_TOKEN secret is not set!"
-          exit 1
+        if [ -z "$ZD_API_TOKEN" ]; then
+          echo "❌ ERROR: ZD_API_TOKEN environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_API_TOKEN }}'"
         else
-          echo "✅ ZD_API_TOKEN is set"
+          echo "✅ ZD_API_TOKEN is set (length: ${#ZD_API_TOKEN} characters)"
         fi
+        echo "🔍 All environment variables:"
+        env | grep ZD_ || echo "No ZD_ environment variables found"
+    
+    - name: Test Zendesk API connection
+      env:
+        ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
+        ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
+        ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
+      run: |
+        echo "🧪 Testing Zendesk API connection..."
+        python3 -c "
+import os
+import urllib.request
+import base64
+import json
+
+subdomain = os.getenv('ZD_SUBDOMAIN', 'manualhelp')
+email = os.getenv('ZD_EMAIL')
+api_token = os.getenv('ZD_API_TOKEN')
+
+print(f'Subdomain: {subdomain}')
+print(f'Email: {email}')
+print(f'API Token length: {len(api_token) if api_token else 0}')
+
+if not all([subdomain, email, api_token]):
+    print('❌ Missing credentials!')
+    exit(1)
+
+auth_string = f'{email}/token:{api_token}'
+auth_header = f'Basic {base64.b64encode(auth_string.encode()).decode()}'
+url = f'https://{subdomain}.zendesk.com/api/v2/users/me.json'
+
+try:
+    request = urllib.request.Request(url)
+    request.add_header('Authorization', auth_header)
+    
+    with urllib.request.urlopen(request) as response:
+        if response.getcode() == 200:
+            data = json.loads(response.read().decode('utf-8'))
+            user = data.get('user', {})
+            print(f'✅ API connection successful!')
+            print(f'   Authenticated as: {user.get(\"name\", \"Unknown\")} ({user.get(\"email\", \"Unknown\")})')
+            print(f'   Role: {user.get(\"role\", \"Unknown\")}')
+        else:
+            print(f'❌ API returned status code: {response.getcode()}')
+except Exception as e:
+    print(f'❌ API connection failed: {e}')
+    exit(1)
+"
     
     - name: Run optimization (DRY RUN)
       env:
@@ -60,9 +111,15 @@ jobs:
         echo "📁 Current directory: $(pwd)"
         echo "📁 Files in directory:"
         ls -la
+        echo "🔍 Environment check inside Active Scripts:"
+        echo "ZD_SUBDOMAIN: ${ZD_SUBDOMAIN:-NOT_SET}"
+        echo "ZD_EMAIL: ${ZD_EMAIL:-NOT_SET}"
+        echo "ZD_API_TOKEN length: ${#ZD_API_TOKEN}"
         echo "🐍 Running Python script..."
         python weekly-agent-optimisation.py --log-level INFO 2>&1 || {
           echo "❌ Script failed with exit code: $?"
+          echo "🔍 Checking if environment variables are available to Python:"
+          python -c "import os; print('ZD_SUBDOMAIN:', os.getenv('ZD_SUBDOMAIN', 'NOT_SET')); print('ZD_EMAIL:', os.getenv('ZD_EMAIL', 'NOT_SET')); print('ZD_API_TOKEN length:', len(os.getenv('ZD_API_TOKEN', '')))"
           exit 1
         }
         
