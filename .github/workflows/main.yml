@@ -34,16 +34,19 @@ jobs:
         echo "🔍 Checking if secrets are set in environment..."
         if [ -z "$ZD_SUBDOMAIN" ]; then
           echo "❌ ERROR: ZD_SUBDOMAIN environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_SUBDOMAIN }}'"
         else
           echo "✅ ZD_SUBDOMAIN is set: ${ZD_SUBDOMAIN}"
         fi
         if [ -z "$ZD_EMAIL" ]; then
           echo "❌ ERROR: ZD_EMAIL environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_EMAIL }}'"
         else
           echo "✅ ZD_EMAIL is set: ${ZD_EMAIL}"
         fi
         if [ -z "$ZD_API_TOKEN" ]; then
           echo "❌ ERROR: ZD_API_TOKEN environment variable is empty!"
+          echo "Secret value from GitHub: '${{ secrets.ZD_API_TOKEN }}'"
         else
           echo "✅ ZD_API_TOKEN is set (length: ${#ZD_API_TOKEN} characters)"
         fi
@@ -57,46 +60,45 @@ jobs:
         ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
       run: |
         echo "🧪 Testing Zendesk API connection..."
-        cat > test_api.py << 'EOF'
-        import os
-        import urllib.request
-        import base64
-        import json
-        
-        subdomain = os.getenv('ZD_SUBDOMAIN', 'manualhelp')
-        email = os.getenv('ZD_EMAIL')
-        api_token = os.getenv('ZD_API_TOKEN')
-        
-        print(f'Subdomain: {subdomain}')
-        print(f'Email: {email}')
-        print(f'API Token length: {len(api_token) if api_token else 0}')
-        
-        if not all([subdomain, email, api_token]):
-            print('❌ Missing credentials!')
-            exit(1)
-        
-        auth_string = f'{email}/token:{api_token}'
-        auth_header = f'Basic {base64.b64encode(auth_string.encode()).decode()}'
-        url = f'https://{subdomain}.zendesk.com/api/v2/users/me.json'
-        
-        try:
-            request = urllib.request.Request(url)
-            request.add_header('Authorization', auth_header)
-            
-            with urllib.request.urlopen(request) as response:
-                if response.getcode() == 200:
-                    data = json.loads(response.read().decode('utf-8'))
-                    user = data.get('user', {})
-                    print(f'✅ API connection successful!')
-                    print(f'   Authenticated as: {user.get("name", "Unknown")} ({user.get("email", "Unknown")})')
-                    print(f'   Role: {user.get("role", "Unknown")}')
-                else:
-                    print(f'❌ API returned status code: {response.getcode()}')
-        except Exception as e:
-            print(f'❌ API connection failed: {e}')
-            exit(1)
-        EOF
-        python3 test_api.py
+        python3 -c "
+import os
+import urllib.request
+import base64
+import json
+
+subdomain = os.getenv('ZD_SUBDOMAIN', 'manualhelp')
+email = os.getenv('ZD_EMAIL')
+api_token = os.getenv('ZD_API_TOKEN')
+
+print(f'Subdomain: {subdomain}')
+print(f'Email: {email}')
+print(f'API Token length: {len(api_token) if api_token else 0}')
+
+if not all([subdomain, email, api_token]):
+    print('❌ Missing credentials!')
+    exit(1)
+
+auth_string = f'{email}/token:{api_token}'
+auth_header = f'Basic {base64.b64encode(auth_string.encode()).decode()}'
+url = f'https://{subdomain}.zendesk.com/api/v2/users/me.json'
+
+try:
+    request = urllib.request.Request(url)
+    request.add_header('Authorization', auth_header)
+    
+    with urllib.request.urlopen(request) as response:
+        if response.getcode() == 200:
+            data = json.loads(response.read().decode('utf-8'))
+            user = data.get('user', {})
+            print(f'✅ API connection successful!')
+            print(f'   Authenticated as: {user.get(\"name\", \"Unknown\")} ({user.get(\"email\", \"Unknown\")})')
+            print(f'   Role: {user.get(\"role\", \"Unknown\")}')
+        else:
+            print(f'❌ API returned status code: {response.getcode()}')
+except Exception as e:
+    print(f'❌ API connection failed: {e}')
+    exit(1)
+"
     
     - name: Run optimization (DRY RUN)
       env:
