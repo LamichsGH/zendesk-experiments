@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Weekly Zendesk Agent Role Optimization Script - Efficient Version
+Weekly Zendesk Agent Role Optimization Script - GitHub Actions Version
 Automatically manages agent roles based on login activity:
 - 1+ week inactive: agent → light agent
 - 1+ month inactive: agent/light agent → end user
 - Protects admins from any changes
-- OPTIMIZED: Fetches agents directly instead of all users
+- SAFE: Never converts agents who have never logged in
 """
 
 import os
@@ -446,99 +446,6 @@ class WeeklyAgentOptimizer:
         
         return conversion_results
 
-    def create_rollback_script(self, conversion_results: List[Dict]) -> str:
-        """Create a rollback script for the changes."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        rollback_filename = f"rollback_weekly_optimization_{timestamp}.py"
-        
-        successful_conversions = [r for r in conversion_results if r['success']]
-        
-        if not successful_conversions:
-            return ""
-        
-        rollback_script = f'''#!/usr/bin/env python3
-"""
-Rollback script for weekly agent optimization run on {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-This script will revert the role changes made by the weekly optimization.
-"""
-
-import json
-import urllib.request
-import urllib.error
-import base64
-import os
-from datetime import datetime
-
-# Zendesk configuration
-SUBDOMAIN = "{self.subdomain}"
-EMAIL = "{self.email}"
-API_TOKEN = os.getenv('ZD_API_TOKEN')
-
-auth_string = f"{{EMAIL}}/token:{{API_TOKEN}}"
-auth_header = f"Basic {{base64.b64encode(auth_string.encode()).decode()}}"
-base_url = f"https://{{SUBDOMAIN}}.zendesk.com/api/v2"
-
-# Light agent role ID
-LIGHT_AGENT_ROLE_ID = {self.light_agent_role_id}
-
-def rollback_changes():
-    """Rollback all changes from the weekly optimization."""
-    changes_to_revert = {json.dumps(successful_conversions, indent=2)}
-    
-    print(f"🔄 Rolling back {{len(changes_to_revert)}} role changes...")
-    
-    for change in changes_to_revert:
-        user_id = change['user_id']
-        name = change['name']
-        from_role = change['from_role']
-        to_role = change['to_role']
-        
-        print(f"  Reverting {{name}}: {{to_role}} → {{from_role}}")
-        
-        # Determine rollback action
-        if to_role == 'end-user':
-            # Revert end-user back to original agent role
-            if from_role == 'agent':
-                update_data = {{"user": {{"role": "agent", "custom_role_id": None}}}}
-            else:
-                update_data = {{"user": {{"role": "agent", "custom_role_id": LIGHT_AGENT_ROLE_ID}}}}
-        elif 'light' in to_role:
-            # Revert light agent back to full agent
-            update_data = {{"user": {{"role": "agent", "custom_role_id": None}}}}
-        else:
-            print(f"    ⚠️ Unknown conversion type, skipping")
-            continue
-        
-        # Execute rollback
-        url = f"{{base_url}}/users/{{user_id}}.json"
-        data = json.dumps(update_data).encode('utf-8')
-        
-        try:
-            request = urllib.request.Request(url, data=data, method='PUT')
-            request.add_header('Authorization', auth_header)
-            request.add_header('Content-Type', 'application/json')
-            
-            with urllib.request.urlopen(request) as response:
-                if response.getcode() == 200:
-                    print(f"    ✅ Successfully reverted {{name}}")
-                else:
-                    print(f"    ❌ Failed to revert {{name}}: {{response.getcode()}}")
-        except Exception as e:
-            print(f"    ❌ Error reverting {{name}}: {{e}}")
-
-if __name__ == "__main__":
-    rollback_changes()
-'''
-        
-        with open(rollback_filename, 'w') as f:
-            f.write(rollback_script)
-        
-        # Make it executable
-        os.chmod(rollback_filename, 0o755)
-        
-        logging.info(f"📁 Rollback script created: {rollback_filename}")
-        return rollback_filename
-
     def export_results(self, analysis_results: Dict[str, List[Dict]], conversion_results: List[Dict]) -> str:
         """Export all results to CSV."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -592,7 +499,7 @@ if __name__ == "__main__":
         return filename
 
 def main():
-    parser = argparse.ArgumentParser(description='Weekly Zendesk Agent Role Optimization - Efficient Version')
+    parser = argparse.ArgumentParser(description='Weekly Zendesk Agent Role Optimization')
     parser.add_argument('--live', action='store_true', help='Execute changes (default is dry run)')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
                        default='INFO', help='Set logging level')
@@ -606,7 +513,7 @@ def main():
     dry_run = not args.live
     
     try:
-        logging.info("🔧 WEEKLY ZENDESK AGENT ROLE OPTIMIZATION - EFFICIENT VERSION")
+        logging.info("🔧 WEEKLY ZENDESK AGENT ROLE OPTIMIZATION")
         logging.info("=" * 80)
         
         optimizer = WeeklyAgentOptimizer(dry_run=dry_run)
@@ -624,14 +531,10 @@ def main():
         # Step 3: Execute optimizations
         conversion_results = optimizer.execute_optimizations(analysis_results)
         
-        # Step 4: Create rollback script
-        if not dry_run and conversion_results:
-            rollback_file = optimizer.create_rollback_script(conversion_results)
-        
-        # Step 5: Export results
+        # Step 4: Export results
         results_file = optimizer.export_results(analysis_results, conversion_results)
         
-        # Step 6: Final summary
+        # Step 5: Final summary
         total_changes = len([r for r in conversion_results if r['success']])
         week_changes = len([r for r in conversion_results if r['action_type'] == 'week_inactive' and r['success']])
         month_changes = len([r for r in conversion_results if r['action_type'] == 'month_inactive' and r['success']])
@@ -647,24 +550,9 @@ def main():
             logging.info(f"✅ {week_changes} agents converted to light agents")
             logging.info(f"✅ {month_changes} agents converted to end users")
             logging.info(f"💰 Actual savings: {total_changes} licenses optimized")
-            if conversion_results:
-                logging.info(f"🔄 Rollback script: {rollback_file}")
         
         logging.info(f"📁 Detailed results: {results_file}")
         logging.info(f"📁 Log file: {log_filename}")
-        
-        # Log next steps
-        logging.info(f"\n💡 NEXT STEPS:")
-        if dry_run:
-            logging.info(f"   1. Review {results_file} for planned changes")
-            logging.info(f"   2. Check for any blocked users that need attention")
-            logging.info(f"   3. Run with --live to execute optimizations")
-        else:
-            logging.info(f"   1. Monitor Zendesk team member count")
-            logging.info(f"   2. Verify cost savings in billing")
-            logging.info(f"   3. Schedule this script to run weekly")
-            if conversion_results:
-                logging.info(f"   4. Keep rollback script safe: {rollback_file}")
         
         return 0
         
