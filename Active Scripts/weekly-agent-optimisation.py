@@ -222,20 +222,67 @@ class WeeklyAgentOptimizer:
         return all_users
 
     def get_all_team_members(self) -> List[Dict]:
-        """Fetch all agents and admins from Zendesk using cursor pagination."""
-        logging.info("👥 Fetching all team members...")
+        """Fetch team members by querying system roles and all custom roles."""
+        logging.info("👥 Fetching team members by roles...")
         all_team_members = []
-
-        # Fetch agents
+        
+        # 1. Fetch system agents
+        logging.info("🔍 Fetching system agents...")
         agents_url = f"{self.base_url}/users.json?role=agent&page[size]=100"
-        all_team_members.extend(self._fetch_paginated_users(agents_url, "agents"))
-
-        # Fetch admins
+        agents = self._fetch_paginated_users(agents_url, "agents")
+        all_team_members.extend(agents)
+        
+        # 2. Fetch system admins
+        logging.info("🔍 Fetching system admins...")
         admins_url = f"{self.base_url}/users.json?role=admin&page[size]=100"
-        all_team_members.extend(self._fetch_paginated_users(admins_url, "admins"))
-
-        logging.info(f"✅ Total team members fetched: {len(all_team_members)}")
-        return all_team_members
+        admins = self._fetch_paginated_users(admins_url, "admins")
+        all_team_members.extend(admins)
+        
+        # 3. Get all custom roles and fetch users for each team-related role
+        logging.info("🔍 Fetching users by custom roles...")
+        custom_roles_url = f"{self.base_url}/custom_roles.json"
+        status, response = make_api_request(custom_roles_url, auth_header=self.auth_header)
+        
+        if status == 200:
+            data = json.loads(response)
+            custom_roles = data.get('custom_roles', [])
+            
+            # Define which custom roles are team members (exclude customer-facing roles if any)
+            team_custom_roles = []
+            for role in custom_roles:
+                role_name = role['name'].lower()
+                # Include roles that are clearly team-related
+                if any(keyword in role_name for keyword in [
+                    'agent', 'light', 'staff', 'advisor', 'team', 'leader', 
+                    'bpo', 'admin', 'contributor', 'billing', 'training'
+                ]):
+                    team_custom_roles.append(role)
+            
+            logging.info(f"📋 Team custom roles found: {[r['name'] for r in team_custom_roles]}")
+            
+            # Fetch users for each team custom role
+            for role in team_custom_roles:
+                role_id = role['id']
+                role_name = role['name']
+                logging.info(f"   Fetching users with custom role: {role_name} (ID: {role_id})")
+                
+                custom_role_url = f"{self.base_url}/users.json?role[]=end-user&custom_role_id={role_id}&page[size]=100"
+                custom_role_users = self._fetch_paginated_users(custom_role_url, f"custom role '{role_name}'")
+                all_team_members.extend(custom_role_users)
+        else:
+            logging.warning(f"Could not fetch custom roles: {status} - {response}")
+        
+        # Remove duplicates (in case someone appears in multiple queries)
+        seen_ids = set()
+        unique_team_members = []
+        for user in all_team_members:
+            user_id = user.get('id')
+            if user_id not in seen_ids:
+                seen_ids.add(user_id)
+                unique_team_members.append(user)
+        
+        logging.info(f"✅ Total team members fetched: {len(unique_team_members)}")
+        return unique_team_members
 
     def get_assigned_tickets_count(self, agent_id: int) -> int:
         """Check how many tickets are assigned to this agent."""
