@@ -116,10 +116,38 @@ class WeeklyAgentOptimizer:
             logging.info(f"✅ API connection successful!")
             logging.info(f"   Authenticated as: {user.get('name', 'Unknown')} ({user.get('email', 'Unknown')})")
             logging.info(f"   Role: {user.get('role', 'Unknown')}")
+            logging.info(f"   User ID: {user.get('id', 'Unknown')}")
         else:
             error_msg = f"API connection failed: {status} - {response}"
             logging.error(f"❌ {error_msg}")
             raise ValueError(error_msg)
+        
+        # Test custom roles endpoint specifically
+        logging.info("🧪 Testing custom roles endpoint...")
+        custom_roles_url = f"{self.base_url}/custom_roles.json"
+        status, response = make_api_request(custom_roles_url, auth_header=self.auth_header)
+        if status == 200:
+            logging.info(f"✅ Custom roles endpoint works!")
+        else:
+            logging.error(f"❌ Custom roles endpoint failed: {status} - {response}")
+            logging.error(f"   This suggests API token lacks admin permissions for custom roles")
+            logging.error(f"   Current user role: {user.get('role', 'Unknown')}")
+            
+            # Try alternative approach - hardcode the Light agent role ID
+            logging.info("🔄 Using hardcoded Light agent role ID as fallback...")
+            self.light_agent_role_id = 6415937321620  # The ID we know works
+            logging.info(f"✅ Using Light agent role ID: {self.light_agent_role_id}")
+            
+            # Skip the get_light_agent_role_id call and continue
+            self.week_cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+            self.month_cutoff = datetime.now(timezone.utc) - timedelta(days=30)
+            
+            logging.info(f"🔧 {'DRY RUN - ' if self.dry_run else ''}WEEKLY AGENT ROLE OPTIMIZATION")
+            logging.info(f"🏢 Domain: {self.subdomain}.zendesk.com")
+            logging.info(f"📅 Week cutoff: {self.week_cutoff.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            logging.info(f"📅 Month cutoff: {self.month_cutoff.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+            logging.info("=" * 80)
+            return  # Skip the normal initialization
         
         # Get light agent custom role ID
         self.light_agent_role_id = self.get_light_agent_role_id()
@@ -169,12 +197,12 @@ class WeeklyAgentOptimizer:
         while url:
             page_count += 1
             if page_count % 5 == 0:
-                logging.info(f"  {user_type}s: Fetched {page_count} pages...")
+                logging.info(f"  {user_type}: Fetched {page_count} pages...")
             
             status, response = make_api_request(url, auth_header=self.auth_header)
             
             if status != 200:
-                logging.error(f"Failed to fetch {user_type}s page {page_count}: {status} - {response}")
+                logging.error(f"Failed to fetch {user_type} page {page_count}: {status} - {response}")
                 break
             
             data = json.loads(response)
@@ -190,7 +218,7 @@ class WeeklyAgentOptimizer:
             # Rate limiting
             time.sleep(0.1)
         
-        logging.info(f"✅ Fetched {len(all_users)} {user_type}s from {page_count} pages")
+        logging.info(f"✅ Fetched {len(all_users)} {user_type} from {page_count} pages")
         return all_users
 
     def get_all_team_members(self) -> List[Dict]:
@@ -199,11 +227,11 @@ class WeeklyAgentOptimizer:
         all_team_members = []
 
         # Fetch agents
-        agents_url = f"{self.base_url}/agents.json?page[size]=100"
+        agents_url = f"{self.base_url}/users.json?role=agent&page[size]=100"
         all_team_members.extend(self._fetch_paginated_users(agents_url, "agents"))
 
         # Fetch admins
-        admins_url = f"{self.base_url}/admins.json?page[size]=100"
+        admins_url = f"{self.base_url}/users.json?role=admin&page[size]=100"
         all_team_members.extend(self._fetch_paginated_users(admins_url, "admins"))
 
         logging.info(f"✅ Total team members fetched: {len(all_team_members)}")
