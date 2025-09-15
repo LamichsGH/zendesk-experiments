@@ -89,7 +89,7 @@ class WeeklyAgentOptimizer:
         
         # Validate environment variables
         missing_vars = []
-        if not self.subdomain or self.subdomain == 'manualhelp':
+        if not self.subdomain:
             missing_vars.append('ZD_SUBDOMAIN')
         if not self.email:
             missing_vars.append('ZD_EMAIL')
