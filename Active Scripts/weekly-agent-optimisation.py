@@ -190,16 +190,17 @@ class WeeklyAgentOptimizer:
         raise ValueError("Light agent custom role not found!")
 
     def _fetch_paginated_users(self, url: str, user_type: str) -> List[Dict]:
-        """Fetch all users using cursor pagination."""
+        """Fetch all users using cursor pagination with safety limits."""
         all_users = []
         page_count = 0
+        max_pages = 50  # Safety limit to prevent infinite loops
         
         # Convert to cursor pagination if not already
         if 'page[size]' not in url:
             separator = '&' if '?' in url else '?'
             url = f"{url}{separator}page[size]=100"
         
-        while url:
+        while url and page_count < max_pages:
             page_count += 1
             if page_count % 5 == 0:
                 logging.info(f"  {user_type}: Fetched {page_count} pages...")
@@ -215,6 +216,12 @@ class WeeklyAgentOptimizer:
             # Handle both 'users' and user_type keys
             users_key = user_type if user_type in data else 'users'
             users = data.get(users_key, [])
+            
+            # Break if we get empty page
+            if not users:
+                logging.info(f"  {user_type}: Empty page {page_count}, stopping")
+                break
+                
             all_users.extend(users)
             
             # Use cursor pagination next page (preferred) or fallback to offset
@@ -223,16 +230,23 @@ class WeeklyAgentOptimizer:
             
             if links.get('next'):
                 # Cursor pagination
-                url = links['next']
-                has_more = meta.get('has_more', False)
+                has_more = meta.get('has_more', True)
                 if not has_more:
+                    logging.info(f"  {user_type}: has_more=false, stopping")
                     break
+                url = links['next']
             else:
                 # Fallback to offset pagination
                 url = data.get('next_page')
+                if not url:
+                    logging.info(f"  {user_type}: No next_page, stopping")
+                    break
             
             # Rate limiting
             time.sleep(0.1)
+        
+        if page_count >= max_pages:
+            logging.warning(f"⚠️  {user_type}: Hit safety limit of {max_pages} pages!")
         
         logging.info(f"✅ Fetched {len(all_users)} {user_type} from {page_count} pages")
         return all_users
