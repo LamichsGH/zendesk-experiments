@@ -1,5 +1,5 @@
 ⏺ name: Weekly Agent Role Optimization
-  on:
+on:
     schedule:
       # Runs every Monday at 9:40 AM London time (8:40 AM UTC during BST)
       - cron: '40 8 * * 1'
