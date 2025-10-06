@@ -1,91 +1,90 @@
-⏺ name: Weekly Agent Role Optimization
-on:
+  name: Weekly Agent Role Optimization
+  on:
     schedule:
-      # Runs every Monday at 9:40 AM London time (8:40 AM UTC during BST)
       - cron: '40 8 * * 1'
-    workflow_dispatch:  # Allows manual trigger for testing
+    workflow_dispatch:
 
   jobs:
     optimize-agents:
       runs-on: ubuntu-latest
 
-      steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+  steps:
+  - name: Checkout code
+    uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
+  - name: Set up Python
+    uses: actions/setup-python@v4
+    with:
+      python-version: '3.9'
 
-      - name: Debug - Check repository contents
-        run: |
-          echo "📁 Repository root contents:"
-          ls -la
-          echo "📁 Active Scripts directory:"
-          ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
+  - name: Debug - Check repository contents
+    run: |
+      echo "Repository root contents:"
+      ls -la
+      echo "Active Scripts directory:"
+      ls -la "Active Scripts"/ || echo "Active Scripts directory not found"
 
-      - name: Check environment secrets
-        env:
-          ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
-          ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
-          ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
-        run: |
-          echo "🔍 Checking if secrets are set in environment..."
-          if [ -z "$ZD_SUBDOMAIN" ]; then
-            echo "❌ ERROR: ZD_SUBDOMAIN environment variable is empty!"
-          else
-            echo "✅ ZD_SUBDOMAIN is set: ${ZD_SUBDOMAIN}"
-          fi
-          if [ -z "$ZD_EMAIL" ]; then
-            echo "❌ ERROR: ZD_EMAIL environment variable is empty!"
-          else
-            echo "✅ ZD_EMAIL is set: ${ZD_EMAIL}"
-          fi
-          if [ -z "$ZD_API_TOKEN" ]; then
-            echo "❌ ERROR: ZD_API_TOKEN environment variable is empty!"
-          else
-            echo "✅ ZD_API_TOKEN is set (length: ${#ZD_API_TOKEN} characters)"
-          fi
+  - name: Check environment secrets
+    env:
+      ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
+      ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
+      ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
+    run: |
+      echo "Checking if secrets are set in environment..."
+      if [ -z "$ZD_SUBDOMAIN" ]; then
+        echo "ERROR: ZD_SUBDOMAIN environment variable is empty!"
+      else
+        echo "ZD_SUBDOMAIN is set: ${ZD_SUBDOMAIN}"
+      fi
+      if [ -z "$ZD_EMAIL" ]; then
+        echo "ERROR: ZD_EMAIL environment variable is empty!"
+      else
+        echo "ZD_EMAIL is set: ${ZD_EMAIL}"
+      fi
+      if [ -z "$ZD_API_TOKEN" ]; then
+        echo "ERROR: ZD_API_TOKEN environment variable is empty!"
+      else
+        echo "ZD_API_TOKEN is set (length: ${#ZD_API_TOKEN} characters)"
+      fi
 
-      - name: Run optimization (LIVE) - Protected Version
-        env:
-          ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
-          ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
-          ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
-        run: |
-          echo "🚀 Running weekly agent optimization (LIVE MODE with TRT protection)..."
-          cd "Active Scripts"
-          echo "📁 Current directory: $(pwd)"
-          echo "📁 Files in directory:"
-          ls -la
-          echo "🔍 Environment check inside Active Scripts:"
-          echo "ZD_SUBDOMAIN: ${ZD_SUBDOMAIN:-NOT_SET}"
-          echo "ZD_EMAIL: ${ZD_EMAIL:-NOT_SET}"
-          echo "ZD_API_TOKEN length: ${#ZD_API_TOKEN}"
-          echo "🛡️  TRT clinicians protected: whitney.abiodun@manual.co, chichi.mumba@manual.co, dawn@manual.co, katej@manual.co, rana@manual.co"
-          echo "📅 Updated timing: 2 weeks inactive → light agent (instead of 1 week)"
-          echo "🐍 Running Python script in LIVE mode..."
-          python weekly_agent_optimization_protected.py --execute --log-level INFO
+  - name: Run optimization (LIVE) - Protected Version
+    env:
+      ZD_SUBDOMAIN: ${{ secrets.ZD_SUBDOMAIN }}
+      ZD_EMAIL: ${{ secrets.ZD_EMAIL }}
+      ZD_API_TOKEN: ${{ secrets.ZD_API_TOKEN }}
+    run: |
+      echo "Running weekly agent optimization (LIVE MODE with TRT protection)..."
+      cd "Active Scripts"
+      echo "Current directory: $(pwd)"
+      echo "Files in directory:"
+      ls -la
+      echo "Environment check inside Active Scripts:"
+      echo "ZD_SUBDOMAIN: ${ZD_SUBDOMAIN:-NOT_SET}"
+      echo "ZD_EMAIL: ${ZD_EMAIL:-NOT_SET}"
+      echo "ZD_API_TOKEN length: ${#ZD_API_TOKEN}"
+      echo "TRT clinicians protected: whitney.abiodun@manual.co, chichi.mumba@manual.co, dawn@manual.co, katej@manual.co, rana@manual.co"
+      echo "Updated timing: 2 weeks inactive → light agent (instead of 1 week)"
+      echo "Running Python script in LIVE mode..."
+      python weekly_agent_optimization_protected.py --execute --log-level INFO
 
-      - name: List output files
-        if: always()
-        run: |
-          echo "📊 Files in Active Scripts:"
-          ls -la "Active Scripts"/*.csv 2>/dev/null || echo "No CSV files found in Active Scripts"
-          ls -la "Active Scripts"/*.log 2>/dev/null || echo "No log files found in Active Scripts"
-          echo "📊 Files in root:"
-          ls -la *.csv 2>/dev/null || echo "No CSV files found in root"
-          ls -la *.log 2>/dev/null || echo "No log files found in root"
+  - name: List output files
+    if: always()
+    run: |
+      echo "Files in Active Scripts:"
+      ls -la "Active Scripts"/*.csv 2>/dev/null || echo "No CSV files found in Active Scripts"
+      ls -la "Active Scripts"/*.log 2>/dev/null || echo "No log files found in Active Scripts"
+      echo "Files in root:"
+      ls -la *.csv 2>/dev/null || echo "No CSV files found in root"
+      ls -la *.log 2>/dev/null || echo "No log files found in root"
 
-      - name: Upload results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: optimization-results-protected-${{ github.run_number }}
-          path: |
-            Active Scripts/*.csv
-            Active Scripts/*.log
-            *.csv
-            *.log
-          retention-days: 30
+  - name: Upload results
+    uses: actions/upload-artifact@v4
+    if: always()
+    with:
+      name: optimization-results-protected-${{ github.run_number }}
+      path: |
+        Active Scripts/*.csv
+        Active Scripts/*.log
+        *.csv
+        *.log
+      retention-days: 30
